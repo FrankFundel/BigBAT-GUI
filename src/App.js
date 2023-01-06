@@ -180,10 +180,14 @@ export class App extends Component {
       classifyAllProgress: 0,
       classifyAllLoading: false,
       recordingsMenu: null,
+      recordingLoading: null,
+      fileNotFoundDialog: false,
     };
 
     window.eel.expose(this.setSpectrogram, "setSpectrogram");
     window.eel.expose(this.classifiedRecording, "classifiedRecording");
+    window.eel.expose(this.setRecording, "setRecording");
+    window.eel.expose(this.setRecordingLoading, "setRecordingLoading");
   }
 
   componentDidMount() {
@@ -309,7 +313,8 @@ export class App extends Component {
     });
   };
 
-  selectRecording = (recording, recordingIndex) => {
+  selectRecording = (recordingIndex) => {
+    let recording = this.state.recordings[recordingIndex];
     this.setState({
       specLoading: true,
       recordingData: recording,
@@ -321,7 +326,12 @@ export class App extends Component {
       },
       tabValue: 0,
     });
-    eel.get_spectrogram(this.state.selectedProject, recordingIndex)();
+    eel.get_spectrogram(
+      this.state.selectedProject,
+      recordingIndex
+    )((result) => {
+      this.setState({ fileNotFoundDialog: !result });
+    });
   };
 
   classifyAll = () => {
@@ -348,30 +358,58 @@ export class App extends Component {
     eel.classify(selectedProject, selectedRecording)();
   };
 
-  classifiedRecording = (recordingIndex, classification, classes, progress) => {
-    const newRecordings = this.state.recordings.slice();
-    newRecordings[recordingIndex].class = classes.join(", ");
-    newRecordings[recordingIndex].classification = classification;
+  classifiedRecording = (
+    projectIndex,
+    recordingIndex,
+    classification,
+    classes,
+    progress
+  ) => {
+    if (projectIndex == this.state.selectedProject) {
+      const newRecordings = this.state.recordings.slice();
+      newRecordings[recordingIndex].class = classes.join(", ");
+      newRecordings[recordingIndex].classification = classification;
 
-    if (this.state.selectedRecording == recordingIndex) {
-      let newRecordingData = this.state.recordings[recordingIndex];
-      newRecordingData.class = classes.join(", ");
+      if (this.state.selectedRecording == recordingIndex) {
+        let newRecordingData = this.state.recordingData;
+        newRecordingData.class = classes.join(", ");
+        this.setState({
+          recordingData: newRecordingData,
+          classification,
+          classifyLoading: false,
+        });
+      }
+
       this.setState({
-        recordingData: newRecordingData,
-        classification,
-        classifyLoading: false,
+        recordings: newRecordings,
+        classifyAllProgress: progress,
+        classifyAllLoading: progress != 100,
+        recordingLoading: null,
       });
     }
+  };
 
+  setRecording = (newRecordingData) => {
     this.setState({
-      recordings: newRecordings,
-      classifyAllProgress: progress,
-      classifyAllLoading: progress != 100,
+      recordingData: newRecordingData,
     });
   };
 
+  setRecordingLoading = (projectIndex, recordingIndex) => {
+    if (projectIndex == this.state.selectedProject) {
+      this.setState({
+        recordingLoading: recordingIndex,
+      });
+    }
+  };
+
   renderRecording = ({ index, style, data }) => {
-    const { recordings, selectedRecording, selectedRecordings } = this.state;
+    const {
+      recordings,
+      selectedRecording,
+      selectedRecordings,
+      recordingLoading,
+    } = this.state;
     const recording = data[index];
 
     return (
@@ -399,7 +437,7 @@ export class App extends Component {
         />
         <ListItemText
           primary={recording.title}
-          onClick={() => this.selectRecording(recording, index)}
+          onClick={() => this.selectRecording(index)}
           secondary={
             <Typography
               noWrap
@@ -416,17 +454,25 @@ export class App extends Component {
               >
                 {moment(recording.date).format("DD/MM/YYYY HH:mm:ss")}
               </Typography>
-              {recording.class && (
-                <Typography
-                  style={{
-                    fontSize: 10,
-                    color: "#42a5f5",
-                    marginLeft: 4,
-                  }}
-                  display="inline"
-                >
-                  {recording.class}
-                </Typography>
+              {index == recordingLoading ? (
+                <CircularProgress
+                  size={8}
+                  style={{ marginLeft: 4 }}
+                  color="primary"
+                />
+              ) : (
+                recording.class && (
+                  <Typography
+                    style={{
+                      fontSize: 10,
+                      color: "#42a5f5",
+                      marginLeft: 4,
+                    }}
+                    display="inline"
+                  >
+                    {recording.class}
+                  </Typography>
+                )
               )}
             </Typography>
           }
@@ -460,6 +506,7 @@ export class App extends Component {
       classifyAllProgress,
       classifyAllLoading,
       recordingsMenu,
+      fileNotFoundDialog,
     } = this.state;
 
     return (
@@ -661,8 +708,12 @@ export class App extends Component {
                   id={"spectrogram"}
                   cols={specData.length}
                   rows={specData[0].length}
-                  maxF={257 / 128}
-                  maxS={1723} // pixels per second
+                  maxF={
+                    recordingData.samplerate
+                      ? (257 / recordingData.samplerate) * 2000
+                      : (257 / 220500) * 2000
+                  }
+                  maxS={1723} // pixels per second: floor(sr/floor(nfft/4)) + 1 = floor(220500/128) + 1
                 />
               )}
             </Box>
@@ -686,20 +737,30 @@ export class App extends Component {
             >
               <Grid display={tabValue == 0 ? "flex" : "none"}>
                 <Grid item xs={3}>
-                  <Typography variant="h5" gutterBottom>
+                  <Typography variant="h6" gutterBottom>
                     Metadata
                   </Typography>
-                  <Typography variant="subtitle1" color="text.secondary" noWrap>
+                  <Typography variant="subtitle2" color="text.secondary" noWrap>
                     Title: {recordingData.title}
                   </Typography>
-                  <Typography variant="subtitle1" color="text.secondary" noWrap>
+                  <Typography variant="subtitle2" color="text.secondary" noWrap>
                     Date:{" "}
                     {moment(recordingData.date).format("DD/MM/YYYY HH:mm:ss")}
                   </Typography>
-                  <Typography variant="subtitle1" color="text.secondary" noWrap>
-                    Temperature: {recordingData.temperature} °C
+                  <Typography variant="subtitle2" color="text.secondary" noWrap>
+                    Temperature: {recordingData.temperature || "-"} °C
                   </Typography>
-                  <Typography variant="subtitle1" color="text.primary" noWrap>
+                  <Typography variant="subtitle2" color="text.secondary" noWrap>
+                    Duration:{" "}
+                    {recordingData.duration
+                      ? recordingData.duration.toFixed(2)
+                      : "-"}{" "}
+                    s
+                  </Typography>
+                  <Typography variant="subtitle2" color="text.secondary" noWrap>
+                    Sample rate: {recordingData.samplerate || "-"} Hz
+                  </Typography>
+                  <Typography variant="subtitle2" color="text.primary" noWrap>
                     Species: {recordingData.class || "-"}
                   </Typography>
                   <LoadingButton
@@ -831,6 +892,34 @@ export class App extends Component {
               variant="contained"
             >
               {editProject ? "Save" : "Create"}
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        <Dialog
+          open={fileNotFoundDialog}
+          onClose={() => this.setState({ fileNotFoundDialog: false })}
+        >
+          <DialogTitle>File was not found</DialogTitle>
+          <DialogContent>
+            <DialogContentText>
+              The file {recordingData.path} was not found. If it is on another
+              storage, please connect it to your device.
+            </DialogContentText>
+          </DialogContent>
+          <DialogActions>
+            <Button
+              onClick={() => this.selectRecording(this.state.selectedRecording)}
+              autoFocus
+              color="primary"
+            >
+              Retry
+            </Button>
+            <Button
+              onClick={() => this.setState({ fileNotFoundDialog: false })}
+              color="inherit"
+            >
+              Ok
             </Button>
           </DialogActions>
         </Dialog>

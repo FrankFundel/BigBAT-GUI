@@ -6,7 +6,8 @@
 /__pycache__
 /.pnp
 .pnp.js
-/__pycache__
+/models/__pycache__
+*.spec
 
 # testing
 /coverage

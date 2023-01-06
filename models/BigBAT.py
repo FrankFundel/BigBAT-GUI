@@ -45,7 +45,7 @@ class BigBAT(nn.Module):
         self.d_model = d_model
 
     def forward(self, x):
-        x = x.unfold(dimension=1, size=self.patch_len, step=self.patch_skip).permute((0, 1, 3, 2)) # patches
+        x = x.unfold(dimension=1, size=self.patch_len, step=self.patch_skip).transpose(3, 2) # patches
     
         b, n, w, h = x.shape
         x = x.reshape((b * n, 1, w, h))

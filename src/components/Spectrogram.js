@@ -169,6 +169,7 @@ const Spectrogram = (props) => {
       .setTitle("")
       .setPadding({ left: 40, bottom: 30 });
 
+    const maxI = 255;
     const seriesSpectrogram = chartSpectrogram
       .addHeatmapGridSeries({
         columns: cols,
@@ -182,12 +183,24 @@ const Spectrogram = (props) => {
           lut: new LUT({
             interpolate: true,
             steps: [
-              { value: 0, label: "0.0", color: ColorHSV(0, 1, 0) },
-              { value: 0.2, label: "0.2", color: ColorHSV(270, 0.84, 0.2) },
-              { value: 0.4, label: "0.4", color: ColorHSV(289, 0.86, 0.35) },
-              { value: 0.6, label: "0.6", color: ColorHSV(324, 0.97, 0.56) },
-              { value: 0.8, label: "0.8", color: ColorHSV(1, 1, 1) },
-              { value: 1.0, label: "1.0", color: ColorHSV(44, 0.64, 1) },
+              { value: 0 * maxI, label: "0.0", color: ColorHSV(0, 1, 0) },
+              {
+                value: 0.2 * maxI,
+                label: "0.2",
+                color: ColorHSV(270, 0.84, 0.2),
+              },
+              {
+                value: 0.4 * maxI,
+                label: "0.4",
+                color: ColorHSV(289, 0.86, 0.35),
+              },
+              {
+                value: 0.6 * maxI,
+                label: "0.6",
+                color: ColorHSV(324, 0.97, 0.56),
+              },
+              { value: 0.8 * maxI, label: "0.8", color: ColorHSV(1, 1, 1) },
+              { value: 1.0 * maxI, label: "1.0", color: ColorHSV(44, 0.64, 1) },
             ],
           }),
         })

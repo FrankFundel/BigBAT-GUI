@@ -10,7 +10,7 @@ import tkinter as tk
 from tkinter.filedialog import askopenfilename, askopenfilenames
 
 from tools import preprocess
-import librosa
+import soundfile as sf
 import torch
 from bat import Model
 from scipy import signal
@@ -126,13 +126,12 @@ def add_recordings(projectIndex):
     projects[projectIndex]["recordings"].append({
       "title": os.path.basename(path),
       "path": path,
-      "date": time.time(),
+      "date": os.path.getctime(path) * 1000,
       "location": {
         "latitude": 0,
         "longitude": 0,
       },
-      "temperature": 0,
-      "prediction": {}
+      "size": os.path.getsize(path),
     })
   save_projects() # Race condition?
 
@@ -167,17 +166,28 @@ def add_metadata(projectIndex):
       recs[r]["location"]["longitude"] = recdat["loc"][1]
   save_projects()
 
-def get_spectrogram_async(projectIndex, recordingIndex):
-  rec = projects[projectIndex]["recordings"][recordingIndex]
-  y, _ = librosa.load(rec["path"], sr=220500)
-  y = signal.lfilter(b, a, y)
-  x = preprocess(torch.Tensor(y).unsqueeze(0))
-  S = x.squeeze(0).tolist()
+def get_spectrogram_async(rec):
+  y, sr = sf.read(rec["path"], dtype='int16')
+
+  info = sf.info(rec["path"])
+  rec["samplerate"] = sr
+  rec["duration"] = info.duration
+  eel.setRecording(rec)
+
+  x = preprocess(torch.Tensor(y).unsqueeze(0)).squeeze(0) * 255 # save data
+  S = x.to(torch.uint8).tolist()
+  print("Calculated spectrogram")
+
+  save_projects()
   eel.setSpectrogram(S)
 
 @eel.expose
 def get_spectrogram(projectIndex, recordingIndex):
-  eel.spawn(get_spectrogram_async, projectIndex, recordingIndex)
+  rec = projects[projectIndex]["recordings"][recordingIndex]
+  if not os.path.exists(rec["path"]):
+    return False
+  eel.spawn(get_spectrogram_async, rec)
+  return True
 
 @eel.expose
 def set_classifier(projectIndex, classifierIndex):
@@ -204,8 +214,9 @@ def predict(rec):
 def classify_async(projectIndex, recordingIndex):
   setup_classifier(projectIndex)
   rec = projects[projectIndex]["recordings"][recordingIndex]
+  eel.setRecordingLoading(projectIndex, recordingIndex)
   classification, classes = predict(rec)
-  eel.classifiedRecording(recordingIndex, classification, classes, 100)
+  eel.classifiedRecording(projectIndex, recordingIndex, classification, classes, 100)
   save_projects()
 
 @eel.expose
@@ -217,13 +228,15 @@ def classify_all_async(projectIndex, indices=None):
   recs = projects[projectIndex]["recordings"]
   if indices is None:
     indices = range(len(recs))
-  p = 0
-  for i in indices:
-    classification, classes = predict(recs[i])
-    save_projects()
-    p += 1
-    progress = p / len(indices)
-    eel.classifiedRecording(i, classification, classes, progress * 100)
+
+  for p, i in enumerate(indices):
+    eel.setRecordingLoading(projectIndex, i)
+    if os.path.exists(recs[i]["path"]):
+      classification, classes = predict(recs[i])
+      save_projects()
+    else:
+      classification, classes = None, ""
+    eel.classifiedRecording(projectIndex, i, classification, classes, (p / len(indices)) * 100)
 
 @eel.expose
 def classify_all(projectIndex, indices=None):

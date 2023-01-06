@@ -14,14 +14,13 @@ from scipy import signal
 b, a = signal.butter(10, 15000 / 120000, 'highpass')
 
 class Model():
-  def __init__(self, classes, modelpath):
+  def __init__(self, classes, modelpath, nfft=512, max_len=60, patch_len=44, patch_skip=22):
     self.classes = classes
   
     big_patch_embedding = nn.Sequential(
       nn.Conv2d(1, 16, kernel_size=(3, 5), stride=(2, 3), padding=3),
       nn.BatchNorm2d(16),
       nn.ReLU(),
-      #nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
 
       nn.Conv2d(16, 32, kernel_size=(3, 5), stride=(2, 3), padding=3),
       nn.BatchNorm2d(32),
@@ -31,7 +30,6 @@ class Model():
       nn.Conv2d(32, 32, kernel_size=(3, 3), stride=(2, 3), padding=1),
       nn.BatchNorm2d(32),
       nn.ReLU(),
-      #nn.MaxPool2d(kernel_size=5, stride=2, padding=1),
 
       nn.Conv2d(32, 64, kernel_size=(3, 3), stride=(2, 3), padding=1),
       nn.BatchNorm2d(64),
@@ -40,13 +38,17 @@ class Model():
       nn.Conv2d(64, 64, kernel_size=(3, 3), stride=(2, 2), padding=1),
       nn.BatchNorm2d(64),
       nn.ReLU(),
-      #nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
     )
 
+    self.max_len = max_len
+    self.patch_len = patch_len
+    self.patch_skip = patch_skip
+    self.nfft = nfft
+
     self.model = BigBAT(
-      max_len=60,
-      patch_len=44,
-      patch_skip=22,
+      max_len=max_len,
+      patch_len=patch_len,
+      patch_skip=patch_skip,
       d_model=64,
       num_classes=len(list(classes)),
       patch_embedding=big_patch_embedding,
@@ -57,11 +59,13 @@ class Model():
     self.model.load_state_dict(torch.load(modelpath, map_location='cpu'))
     self.model.eval()
 
+  # downsampling to 22.05kHz and then slowing down 10x
   def predict(self, filename, sample_rate=220500, threshold=0.5):
     y, _ = librosa.load(filename, sr=sample_rate)
     y = signal.lfilter(b, a, y)
-    ys = slideWindow(y, (60 + 1) * 2816, 60 * 2816)
-    x = preprocess(torch.Tensor(ys))
+    samples_per_patch = self.patch_skip * (self.nfft // 4)
+    ys = slideWindow(torch.Tensor(y), (self.max_len + 1) * samples_per_patch, self.max_len * samples_per_patch)
+    x = preprocess(ys, self.nfft)
     output = self.model(x)
     prediction = torch.sigmoid(output).mean(axis=0)
     
