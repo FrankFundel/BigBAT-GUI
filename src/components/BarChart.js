@@ -316,7 +316,6 @@ const BarChart = (props) => {
     for (let i in categories) {
       entries.push({ category: categories[i], value: values[i] });
     }
-    console.log(entries);
     chart.addValues(entries);
 
     chartRef.current = { chart };

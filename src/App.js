@@ -44,9 +44,11 @@ import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import EditOutlineIcon from "@mui/icons-material/EditOutlined";
 import MoreVertIcon from "@mui/icons-material/MoreVert";
 import ThinkIcon from "@mui/icons-material/AutoFixHighOutlined";
+import ExportOutlineIcon from "@mui/icons-material/FileDownloadOutlined";
 
 import Spectrogram from "./components/Spectrogram";
 import BarChart from "./components/BarChart";
+import { FormControl, InputLabel, Link, OutlinedInput } from "@mui/material";
 
 export const eel = window.eel;
 eel.set_host("ws://localhost:8080");
@@ -90,59 +92,13 @@ const darkTheme = createTheme({
   },
 });
 
-const classifiers = [
-  {
-    name: "German Bats",
-    path: "models/BigBAT.pth",
-    classes: [
-      "Rhinolophus ferrumequinum",
-      "Rhinolophus hipposideros",
-      "Myotis daubentonii",
-      "Myotis brandtii",
-      "Myotis mystacinus",
-      "Myotis emarginatus",
-      "Myotis nattereri",
-      "Myotis myotis",
-      "Myotis dasycneme",
-      "Nyctalus noctula",
-      "Nyctalus leisleri",
-      "Pipistrellus pipistrellus",
-      "Pipistrellus nathusii",
-      "Pipistrellus kuhlii",
-      "Eptesicus serotinus",
-      "Eptesicus nilssonii",
-      "Miniopterus schreibersii",
-      "Vespertilio murinus",
-    ],
-    classes_short: [
-      "Rfer",
-      "Rhip",
-      "Mdaub",
-      "Mbrandt",
-      "Mmys",
-      "Mem",
-      "Mnat",
-      "Mmyo",
-      "Mdas",
-      "Nnoc",
-      "Nleis",
-      "Ppip",
-      "Pnat",
-      "Pkuhl",
-      "Eser",
-      "Enil",
-      "Mschreib",
-      "Vmur",
-    ],
-  },
-];
-
 export class App extends Component {
   constructor() {
     super();
     this.state = {
       projects: [],
       recordings: [],
+      classifiers: [],
       selectedProject: 0,
       createProjectModal: false,
       projectTitle: "",
@@ -182,20 +138,28 @@ export class App extends Component {
       recordingsMenu: null,
       recordingLoading: null,
       fileNotFoundDialog: false,
+      maximumProcessingLength: 0,
+      speciesDialog: false,
+      species: [],
     };
 
-    window.eel.expose(this.setSpectrogram, "setSpectrogram");
     window.eel.expose(this.classifiedRecording, "classifiedRecording");
-    window.eel.expose(this.setRecording, "setRecording");
     window.eel.expose(this.setRecordingLoading, "setRecordingLoading");
+    window.eel.expose(this.setSpectrogram, "setSpectrogram");
+    window.eel.expose(this.memoryError, "memoryError");
   }
 
   componentDidMount() {
     document.addEventListener("contextmenu", (e) => {
-      //e.preventDefault();
+      let isDev = "_self" in React.createElement("div");
+      if (!isDev) {
+        e.preventDefault();
+      }
     });
 
     this.loadProjects();
+
+    eel.get_classifiers()((classifiers) => this.setState({ classifiers }));
   }
 
   loadProjects = () => {
@@ -218,6 +182,7 @@ export class App extends Component {
     this.setState({
       recordings: projects[projectIndex].recordings,
       classifier: projects[projectIndex].classifier,
+      maximumProcessingLength: projects[projectIndex].maxproclen,
       selectedProject: projectIndex,
     });
   };
@@ -301,8 +266,19 @@ export class App extends Component {
   };
 
   addMetadata = () => {
-    eel.add_metadata(this.state.selectedProject)(() => {
-      this.loadProjects();
+    eel.add_metadata(this.state.selectedProject)((res) => {
+      if (res) {
+        this.openAlert(
+          "Added meta data",
+          "Importing meta data was successful."
+        );
+        this.loadProjects();
+      } else {
+        this.openAlert(
+          "Could not add meta data",
+          "Importing meta data was unsuccessful, make sure it is in the AudioMoth-Format."
+        );
+      }
     });
   };
 
@@ -313,7 +289,7 @@ export class App extends Component {
     });
   };
 
-  selectRecording = (recordingIndex) => {
+  selectRecording = async (recordingIndex) => {
     let recording = this.state.recordings[recordingIndex];
     this.setState({
       specLoading: true,
@@ -326,11 +302,19 @@ export class App extends Component {
       },
       tabValue: 0,
     });
+
     eel.get_spectrogram(
       this.state.selectedProject,
       recordingIndex
     )((result) => {
-      this.setState({ fileNotFoundDialog: !result });
+      if (result == false) {
+        this.setState({ fileNotFoundDialog: true });
+      } else {
+        this.setState({
+          recordingData: result,
+          fileNotFoundDialog: false,
+        });
+      }
     });
   };
 
@@ -367,12 +351,12 @@ export class App extends Component {
   ) => {
     if (projectIndex == this.state.selectedProject) {
       const newRecordings = this.state.recordings.slice();
-      newRecordings[recordingIndex].class = classes.join(", ");
+      newRecordings[recordingIndex].species = classes.join(", ");
       newRecordings[recordingIndex].classification = classification;
 
       if (this.state.selectedRecording == recordingIndex) {
         let newRecordingData = this.state.recordingData;
-        newRecordingData.class = classes.join(", ");
+        newRecordingData.species = classes.join(", ");
         this.setState({
           recordingData: newRecordingData,
           classification,
@@ -389,18 +373,42 @@ export class App extends Component {
     }
   };
 
-  setRecording = (newRecordingData) => {
-    this.setState({
-      recordingData: newRecordingData,
-    });
-  };
-
   setRecordingLoading = (projectIndex, recordingIndex) => {
     if (projectIndex == this.state.selectedProject) {
       this.setState({
         recordingLoading: recordingIndex,
       });
     }
+  };
+
+  memoryError = () => {
+    this.openAlert(
+      "Memory error",
+      "The sound file was too big to be processed by your device. Make sure you have enough RAM or lower the maximum processing length."
+    );
+  };
+
+  exportCSV = () => {
+    this.setState({ projectContext: null });
+    const { projects, projectContextSelection } = this.state;
+    const projectTitle = projects[projectContextSelection].title;
+    eel.export_csv(projectContextSelection)((res) => {
+      if (res) {
+        this.openAlert(
+          "Successfully exported",
+          projectTitle + " was successfully exported."
+        );
+      } else {
+        this.openAlert(
+          "Exporting unsuccessful",
+          projectTitle + " could not be exported."
+        );
+      }
+    });
+  };
+
+  openAlert = (title, text) => {
+    this.setState({ alertDialog: { title, text } });
   };
 
   renderRecording = ({ index, style, data }) => {
@@ -461,7 +469,7 @@ export class App extends Component {
                   color="primary"
                 />
               ) : (
-                recording.class && (
+                recording.species && (
                   <Typography
                     style={{
                       fontSize: 10,
@@ -470,7 +478,7 @@ export class App extends Component {
                     }}
                     display="inline"
                   >
-                    {recording.class}
+                    {recording.species}
                   </Typography>
                 )
               )}
@@ -507,6 +515,11 @@ export class App extends Component {
       classifyAllLoading,
       recordingsMenu,
       fileNotFoundDialog,
+      alertDialog,
+      maximumProcessingLength,
+      classifiers,
+      speciesDialog,
+      species,
     } = this.state;
 
     return (
@@ -708,12 +721,29 @@ export class App extends Component {
                   id={"spectrogram"}
                   cols={specData.length}
                   rows={specData[0].length}
+                  init={specLoading}
                   maxF={
                     recordingData.samplerate
                       ? (257 / recordingData.samplerate) * 2000
                       : (257 / 220500) * 2000
                   }
-                  maxS={1723} // pixels per second: floor(sr/floor(nfft/4)) + 1 = floor(220500/128) + 1
+                  maxS={
+                    recordingData.samplerate
+                      ? recordingData.samplerate / 128 + 1
+                      : 220500 / 128 + 1
+                  }
+                  loadMore={(offset) => {
+                    console.log("get chunk");
+                    eel.get_chunk(
+                      selectedProject,
+                      selectedRecording,
+                      offset
+                    )((data) => {
+                      if (data) {
+                        this.setState({ specData: [...specData, ...data] });
+                      }
+                    });
+                  }}
                 />
               )}
             </Box>
@@ -760,9 +790,24 @@ export class App extends Component {
                   <Typography variant="subtitle2" color="text.secondary" noWrap>
                     Sample rate: {recordingData.samplerate || "-"} Hz
                   </Typography>
-                  <Typography variant="subtitle2" color="text.primary" noWrap>
-                    Species: {recordingData.class || "-"}
-                  </Typography>
+                  <Link
+                    variant="subtitle2"
+                    color="text.primary"
+                    component={Typography}
+                    underline="hover"
+                    style={{ cursor: "pointer" }}
+                    noWrap
+                    onClick={() =>
+                      this.setState({
+                        speciesDialog: true,
+                        species: recordingData.species
+                          ? recordingData.species.split(", ")
+                          : [],
+                      })
+                    }
+                  >
+                    Species: {recordingData.species || "-"}
+                  </Link>
                   <LoadingButton
                     onClick={this.classify}
                     variant="contained"
@@ -803,16 +848,32 @@ export class App extends Component {
                   value={classifier}
                   label="Classifier"
                   onChange={(event) => {
-                    this.setState({ classifier: event.target.value });
-                    eel.set_classifier(
-                      selectedProject,
-                      event.target.value
-                    )(() => this.loadProjects());
+                    const val = event.target.value;
+                    this.setState({ classifier: val });
+                    eel.set_classifier(selectedProject, val)(this.loadProjects);
                   }}
                 >
                   {classifiers.map((c, i) => (
                     <MenuItem value={i}>{c.name}</MenuItem>
                   ))}
+                </Select>
+                <Select
+                  value={maximumProcessingLength}
+                  label="Maximum processing length"
+                  style={{ marginLeft: 12 }}
+                  onChange={(event) => {
+                    const val = event.target.value;
+                    eel.set_maxproclen(
+                      this.state.selectedProject,
+                      val
+                    )(this.loadProjects);
+                    this.setState({ maximumProcessingLength: val });
+                  }}
+                >
+                  <MenuItem value={5}>5 seconds</MenuItem>
+                  <MenuItem value={10}>10 seconds</MenuItem>
+                  <MenuItem value={15}>15 seconds</MenuItem>
+                  <MenuItem value={0}>Full</MenuItem>
                 </Select>
                 <Button
                   onClick={this.classifyAll}
@@ -924,6 +985,87 @@ export class App extends Component {
           </DialogActions>
         </Dialog>
 
+        <Dialog
+          open={alertDialog != null}
+          onClose={() => this.setState({ alertDialog: null })}
+        >
+          <DialogTitle>{alertDialog ? alertDialog.title : ""}</DialogTitle>
+          <DialogContent>
+            <DialogContentText>
+              {alertDialog ? alertDialog.text : ""}
+            </DialogContentText>
+          </DialogContent>
+          <DialogActions>
+            <Button
+              onClick={() => this.setState({ alertDialog: null })}
+              color="inherit"
+            >
+              Ok
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        <Dialog
+          open={speciesDialog}
+          onClose={() => this.setState({ speciesDialog: false })}
+        >
+          <DialogTitle>Species</DialogTitle>
+          <DialogContent>
+            <FormControl sx={{ m: 1, width: 300 }}>
+              <InputLabel>Species</InputLabel>
+              <Select
+                multiple
+                value={species}
+                onChange={(event) => {
+                  let value = event.target.value;
+                  this.setState({
+                    species:
+                      typeof value === "string" ? value.split(",") : value,
+                  });
+                }}
+                input={<OutlinedInput label="Species" />}
+                renderValue={(selected) => selected.join(", ")}
+                MenuProps={{
+                  PaperProps: {
+                    style: {
+                      maxHeight: 224,
+                      width: 250,
+                    },
+                  },
+                }}
+              >
+                {classifiers[classifier] &&
+                  classifiers[classifier].classes_short.map((name, index) => (
+                    <MenuItem key={name} value={name}>
+                      <Checkbox checked={species.indexOf(name) > -1} />
+                      <ListItemText
+                        primary={classifiers[classifier].classes[index]}
+                      />
+                    </MenuItem>
+                  ))}
+              </Select>
+            </FormControl>
+          </DialogContent>
+          <DialogActions>
+            <Button
+              onClick={() => {
+                let speciesText = species.join(", ");
+                eel.set_species(
+                  selectedProject,
+                  selectedRecording,
+                  speciesText
+                )(() => {
+                  let recordingData = this.state.recordingData;
+                  recordingData.species = speciesText;
+                  this.setState({ speciesDialog: false, recordingData });
+                });
+              }}
+            >
+              Save
+            </Button>
+          </DialogActions>
+        </Dialog>
+
         <Menu
           open={projectContext !== null}
           onClose={() => this.setState({ projectContext: null })}
@@ -943,6 +1085,14 @@ export class App extends Component {
             </ListItemIcon>
             <ListItemText>
               <Typography>Edit</Typography>
+            </ListItemText>
+          </MenuItem>
+          <MenuItem onClick={this.exportCSV}>
+            <ListItemIcon>
+              <ExportOutlineIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText>
+              <Typography>Export CSV</Typography>
             </ListItemText>
           </MenuItem>
           <MenuItem onClick={this.removeProject}>

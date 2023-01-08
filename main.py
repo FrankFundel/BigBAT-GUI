@@ -1,4 +1,4 @@
-import datetime
+from datetime import datetime
 import platform
 import sys
 import eel
@@ -7,71 +7,31 @@ import time
 import os
 import csv
 import tkinter as tk
-from tkinter.filedialog import askopenfilename, askopenfilenames
+from tkinter.filedialog import askopenfilename, askopenfilenames, asksaveasfilename
 
+import torch
 from tools import preprocess
 import soundfile as sf
-import torch
 from bat import Model
-from scipy import signal
-
-# 1th order butterworth high-pass filter with cut-off frequency of 15,000 kHz
-b, a = signal.butter(10, 15000 / 120000, 'highpass')
 
 root = tk.Tk()
 root.withdraw()
 root.wm_attributes('-topmost', 1)
 
-classifiers = [
-  {
-    "name": "German Bats",
-    "path": "models/BigBAT.pth",
-    "classes": [
-      "Rhinolophus ferrumequinum",
-      "Rhinolophus hipposideros",
-      "Myotis daubentonii",
-      "Myotis brandtii",
-      "Myotis mystacinus",
-      "Myotis emarginatus",
-      "Myotis nattereri",
-      "Myotis myotis",
-      "Myotis dasycneme",
-      "Nyctalus noctula",
-      "Nyctalus leisleri",
-      "Pipistrellus pipistrellus",
-      "Pipistrellus nathusii",
-      "Pipistrellus kuhlii",
-      "Eptesicus serotinus",
-      "Eptesicus nilssonii",
-      "Miniopterus schreibersii",
-      "Vespertilio murinus",
-    ],
-    "classes_short": [
-      "Rfer",
-      "Rhip",
-      "Mdaub",
-      "Mbrandt",
-      "Mmys",
-      "Mem",
-      "Mnat",
-      "Mmyo",
-      "Mdas",
-      "Nnoc",
-      "Nleis",
-      "Ppip",
-      "Pnat",
-      "Pkuhl",
-      "Eser",
-      "Enil",
-      "Mschreib",
-      "Vmur",
-    ],
-  },
-]
-
+classifiers = []
 projects = []
 model = None
 classifier = None
+
+@eel.expose
+def get_classifiers():
+  global classifiers
+  if os.path.isfile('classifiers.json'):
+    with open('classifiers.json', 'r') as f:
+      classifiers = json.load(f)
+  else:
+    classifiers = []
+  return classifiers
 
 def save_projects():
   global projects
@@ -98,7 +58,8 @@ def add_project(title, description):
     "description": description,
     "creation_date": time.time(),
     "recordings": [],
-    "classifier": 0
+    "classifier": 0,
+    "maxproclen": 0,
   })
   save_projects()
 
@@ -133,52 +94,67 @@ def add_recordings(projectIndex):
       },
       "size": os.path.getsize(path),
     })
-  save_projects() # Race condition?
+  save_projects()
 
 @eel.expose
 def add_metadata(projectIndex):
   filename = askopenfilename(filetypes=[("CSV-File", "*.csv")])
   if filename == '':
-    return
+    return False
   
-  metadata = {}
-  with open(filename) as csvfile:
-    reader = csv.reader(csvfile, delimiter=',')
-    next(reader)
-    for row in reader:
-      title = row[2]
-      species = row[24]
-      time = row[5] # hh:mm:ss
-      date = row[4] # yyyy-mm-dd
-      temp = float(row[12])
-      loc = [float(row[10]), float(row[11])]
-      timestamp = datetime.datetime.strptime(date + ' ' + time, '%Y-%m-%d %H:%M:%S').timestamp() * 1000
-      metadata[title] = {
-        "species": species, "timestamp": timestamp, "temp": temp, "loc": loc
-      }
-  recs = projects[projectIndex]["recordings"]
-  for r in range(len(recs)):
-    if recs[r]["title"] in metadata:
-      recdat = metadata[recs[r]["title"]]
-      recs[r]["temperature"] = recdat["temp"]
-      recs[r]["date"] = recdat["timestamp"]
-      recs[r]["location"]["latitude"] = recdat["loc"][0]
-      recs[r]["location"]["longitude"] = recdat["loc"][1]
-  save_projects()
+  try:
+    metadata = {}
+    with open(filename) as csvfile:
+      reader = csv.reader(csvfile, delimiter=',')
+      next(reader)
+      for row in reader:
+        title = row[2]
+        species = row[24]
+        time = row[5] # hh:mm:ss
+        date = row[4] # yyyy-mm-dd
+        temp = float(row[12])
+        loc = [float(row[10]), float(row[11])]
+        timestamp = datetime.strptime(date + ' ' + time, '%Y-%m-%d %H:%M:%S').timestamp() * 1000
+        metadata[title] = {
+          "species": species, "timestamp": timestamp, "temp": temp, "loc": loc
+        }
+    recs = projects[projectIndex]["recordings"]
+    for r in range(len(recs)):
+      if recs[r]["title"] in metadata:
+        recdat = metadata[recs[r]["title"]]
+        recs[r]["temperature"] = recdat["temp"]
+        recs[r]["date"] = recdat["timestamp"]
+        recs[r]["location"]["latitude"] = recdat["loc"][0]
+        recs[r]["location"]["longitude"] = recdat["loc"][1]
+    save_projects()
+    return True
+  except:
+    return False
 
-def get_spectrogram_async(rec):
-  y, sr = sf.read(rec["path"], dtype='int16')
-
+@eel.expose
+def get_chunk(projectIndex, recordingIndex, offset):
+  rec = projects[projectIndex]["recordings"][recordingIndex]
+  if not os.path.exists(rec["path"]):
+    return False
   info = sf.info(rec["path"])
-  rec["samplerate"] = sr
-  rec["duration"] = info.duration
-  eel.setRecording(rec)
+  samples = int(info.duration * info.samplerate)
+  chunk_len = 2 * info.samplerate # 2 seconds
+  start = offset * 128 # pixels * (nfft // 4) -> samples
+  if start < samples:
+    y, _ = sf.read(rec["path"], dtype='int16', start=start, frames=chunk_len)
+    x = preprocess(torch.Tensor(y).unsqueeze(0)).squeeze(0) * 255 # save data
+    S = x.to(torch.uint8).tolist()
+    print("Sending chunk...")
+    return S
+  else:
+    return None
 
+def get_spectrogram_async(rec, sr):
+  chunk_len = 2 * sr # 2 seconds
+  y, _ = sf.read(rec["path"], dtype='int16', frames=chunk_len)
   x = preprocess(torch.Tensor(y).unsqueeze(0)).squeeze(0) * 255 # save data
   S = x.to(torch.uint8).tolist()
-  print("Calculated spectrogram")
-
-  save_projects()
+  print("Sending chunk...")
   eel.setSpectrogram(S)
 
 @eel.expose
@@ -186,8 +162,18 @@ def get_spectrogram(projectIndex, recordingIndex):
   rec = projects[projectIndex]["recordings"][recordingIndex]
   if not os.path.exists(rec["path"]):
     return False
-  eel.spawn(get_spectrogram_async, rec)
-  return True
+  
+  info = sf.info(rec["path"])
+  eel.spawn(get_spectrogram_async, rec, info.samplerate)
+  rec["samplerate"] = info.samplerate
+  rec["duration"] = info.duration
+  save_projects()
+  return rec
+
+@eel.expose
+def set_species(projectIndex, recordingIndex, species):
+  projects[projectIndex]["recordings"][recordingIndex]["species"] = species
+  save_projects()
 
 @eel.expose
 def set_classifier(projectIndex, classifierIndex):
@@ -201,21 +187,26 @@ def setup_classifier(projectIndex):
   model = Model(classifier["classes"], classifier["path"])
   print("Done setting up", classifier["name"])
 
-def predict(rec):
-  prediction, labels = model.predict(rec["path"])
-  classification = {"prediction": prediction, "labels": labels}
-  rec["classification"] = classification
-  classes = []
-  for l in labels:
-    classes.append(classifier["classes_short"][l])
-  rec["class"] = ", ".join(classes)
-  return classification, classes
+def predict(rec, proclen):
+  try:
+    prediction, labels = model.predict(rec["path"], proclen=proclen)
+    classification = {"prediction": prediction, "labels": labels}
+    rec["classification"] = classification
+    classes = []
+    for l in labels:
+      classes.append(classifier["classes_short"][l])
+    rec["species"] = ", ".join(classes)
+    return classification, classes
+  except:
+    print("Memory error")
+    eel.memoryError()
+    return {}, []
 
 def classify_async(projectIndex, recordingIndex):
   setup_classifier(projectIndex)
   rec = projects[projectIndex]["recordings"][recordingIndex]
   eel.setRecordingLoading(projectIndex, recordingIndex)
-  classification, classes = predict(rec)
+  classification, classes = predict(rec, projects[projectIndex]["maxproclen"])
   eel.classifiedRecording(projectIndex, recordingIndex, classification, classes, 100)
   save_projects()
 
@@ -232,19 +223,52 @@ def classify_all_async(projectIndex, indices=None):
   for p, i in enumerate(indices):
     eel.setRecordingLoading(projectIndex, i)
     if os.path.exists(recs[i]["path"]):
-      classification, classes = predict(recs[i])
+      if "duration" not in recs[i]:
+        info = sf.info(recs[i]["path"])
+        recs[i]["samplerate"] = info.samplerate
+        recs[i]["duration"] = info.duration
+      classification, classes = predict(recs[i], projects[projectIndex]["maxproclen"])
       save_projects()
     else:
       classification, classes = None, ""
-    eel.classifiedRecording(projectIndex, i, classification, classes, (p / len(indices)) * 100)
+    eel.classifiedRecording(projectIndex, i, classification, classes, ((p+1) / len(indices)) * 100)
 
 @eel.expose
 def classify_all(projectIndex, indices=None):
   eel.spawn(classify_all_async, projectIndex, indices)
 
-def start_eel(develop):
-    """Start Eel with either production or development configuration."""
+@eel.expose
+def export_csv(projectIndex):  
+  project = projects[projectIndex]
+  try:
+    path = asksaveasfilename(initialfile=project["title"] + ".csv", defaultextension=".csv", filetypes=[("CSV-File", "*.csv")])
+    if path == '':
+      return False
+    with open(path, 'w', newline='\n') as csvfile:
+      writer = csv.writer(csvfile, delimiter=';')
+      writer.writerow(["filename", "duration", "date", "latitude", "longitude", "temperature", "species"]) # header
+      for rec in project["recordings"]:
+        filename = rec["path"]
+        duration = round(rec.get("duration", 0), 2)
+        date = datetime.fromtimestamp(float(rec["date"]) / 1000).strftime('%d/%m/%Y %H:%M:%S') 
+        latitude = rec["location"]["latitude"]
+        longitude = rec["location"]["longitude"]
+        temperature = rec.get("temperature", "")
+        species = rec.get("species", "")
+        writer.writerow([filename, duration, date, latitude, longitude, temperature, species])
+    return True
+  except Exception as e:
+    print(e)
+    return False
 
+@eel.expose
+def set_maxproclen(projectIndex, val):
+  projects[projectIndex]["maxproclen"] = val
+  save_projects()
+
+def start_eel(develop):
+  """Start Eel with either production or development configuration."""
+  try:
     if develop:
         directory = 'src'
         app = None
@@ -269,11 +293,13 @@ def start_eel(develop):
             eel.start(page, mode='edge', **eel_kwargs)
         else:
             raise
-try:
-  if __name__ == '__main__':
-    import sys
-    start_eel(develop=len(sys.argv) == 2)
-  while True:
-    eel.sleep(1.0)
-except (SystemExit, MemoryError, KeyboardInterrupt) as e:
-  print("Error", e)
+    print("Eel started.")
+    while True:
+      eel.sleep(1.0)
+
+  except (SystemExit, MemoryError, KeyboardInterrupt) as e:
+    print("Error", e)
+    #start_eel(develop)
+
+if __name__ == '__main__':
+  start_eel(develop=len(sys.argv) == 2)

@@ -16,11 +16,13 @@ import {
   SolidLine,
   customTheme,
 } from "@arction/lcjs";
-import React, { useRef, useEffect } from "react";
+import React, { useRef, useEffect, useState } from "react";
 
 const Spectrogram = (props) => {
-  const { data, id, cols, rows, maxF, maxS } = props;
+  const { data, id, cols, rows, maxF, maxS, init } = props;
   const chartRef = useRef(undefined);
+
+  var loading = false;
 
   useEffect(() => {
     console.log("create chart");
@@ -299,13 +301,13 @@ const Spectrogram = (props) => {
       dashboard.dispose();
       chartRef.current = undefined;
     };
-  }, [id, data]);
+  }, [id, init]);
 
   useEffect(() => {
     const components = chartRef.current;
     if (!components) return;
 
-    const {
+    var {
       seriesSpectrogram,
       seriesProjectionX,
       seriesProjectionY,
@@ -313,8 +315,45 @@ const Spectrogram = (props) => {
       chartProjectionX,
       chartProjectionY,
     } = components;
-    const { maxF, maxS, cols, rows } = props;
+    const { maxF, maxS, cols, rows, loadMore } = props;
 
+    loading = false;
+    let maxI = 255;
+    seriesSpectrogram = chartSpectrogram
+      .addHeatmapGridSeries({
+        columns: cols,
+        rows: rows,
+      })
+      .setMouseInteractions(false)
+      .setWireframeStyle(emptyLine)
+      .setFillStyle(
+        new PalettedFill({
+          lookUpProperty: "value",
+          lut: new LUT({
+            interpolate: true,
+            steps: [
+              { value: 0 * maxI, label: "0.0", color: ColorHSV(0, 1, 0) },
+              {
+                value: 0.2 * maxI,
+                label: "0.2",
+                color: ColorHSV(270, 0.84, 0.2),
+              },
+              {
+                value: 0.4 * maxI,
+                label: "0.4",
+                color: ColorHSV(289, 0.86, 0.35),
+              },
+              {
+                value: 0.6 * maxI,
+                label: "0.6",
+                color: ColorHSV(324, 0.97, 0.56),
+              },
+              { value: 0.8 * maxI, label: "0.8", color: ColorHSV(1, 1, 1) },
+              { value: 1.0 * maxI, label: "1.0", color: ColorHSV(44, 0.64, 1) },
+            ],
+          }),
+        })
+      );
     seriesSpectrogram.clear().invalidateIntensityValues(data);
 
     chartSpectrogram
@@ -345,6 +384,14 @@ const Spectrogram = (props) => {
           return (value / maxF).toFixed(2);
         })
       );
+
+    chartSpectrogram.onSeriesBackgroundMouseDrag((_, event) => {
+      const x = seriesSpectrogram.axisX.getInterval().end;
+      if (x > cols + 0.25 * maxS && loading == false) {
+        loadMore(cols);
+        loading = true;
+      }
+    });
 
     // Add custom interaction when mouse is hovered over spectrogram chart.
     chartSpectrogram.onSeriesBackgroundMouseMove((_, event) => {
@@ -392,7 +439,7 @@ const Spectrogram = (props) => {
     });
   }, [data, chartRef]);
 
-  return <div id={id} style={{ height: "100%" }}></div>;
+  return <div id={id} ref={chartRef} style={{ height: "100%" }}></div>;
 };
 
 export default Spectrogram;

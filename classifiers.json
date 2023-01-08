@@ -1,0 +1,53 @@
+[
+  {
+    "name": "German Bats",
+    "path": "models/BigBAT.pth",
+    "parameters": {
+      "sample_rate": 220500,
+      "nfft": 512,
+      "max_len": 60,
+      "patch_size": 44,
+      "patch_skip": 22
+    },
+    "classes": [
+      "Rhinolophus ferrumequinum",
+      "Rhinolophus hipposideros",
+      "Myotis daubentonii",
+      "Myotis brandtii",
+      "Myotis mystacinus",
+      "Myotis emarginatus",
+      "Myotis nattereri",
+      "Myotis myotis",
+      "Myotis dasycneme",
+      "Nyctalus noctula",
+      "Nyctalus leisleri",
+      "Pipistrellus pipistrellus",
+      "Pipistrellus nathusii",
+      "Pipistrellus kuhlii",
+      "Eptesicus serotinus",
+      "Eptesicus nilssonii",
+      "Miniopterus schreibersii",
+      "Vespertilio murinus"
+    ],
+    "classes_short": [
+      "Rfer",
+      "Rhip",
+      "Mdaub",
+      "Mbrandt",
+      "Mmys",
+      "Mem",
+      "Mnat",
+      "Mmyo",
+      "Mdas",
+      "Nnoc",
+      "Nleis",
+      "Ppip",
+      "Pnat",
+      "Pkuhl",
+      "Eser",
+      "Enil",
+      "Mschreib",
+      "Vmur"
+    ]
+  }
+]
