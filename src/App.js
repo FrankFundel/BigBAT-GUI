@@ -107,12 +107,8 @@ export class App extends Component {
       projectContextSelection: 0,
       recordingIndex: 0,
       selectedRecordings: [],
-      specData: [
-        {
-          data: null,
-          label: "Spectrogram",
-        },
-      ],
+      specData: [],
+      waveData: [],
       classification: null,
       tabValue: 1,
       specTabValue: 0,
@@ -141,12 +137,16 @@ export class App extends Component {
       maximumProcessingLength: 0,
       speciesDialog: false,
       species: [],
+      specStart: 0,
+      specEnd: 0,
+      playPause: false,
     };
 
     window.eel.expose(this.classifiedRecording, "classifiedRecording");
     window.eel.expose(this.setRecordingLoading, "setRecordingLoading");
-    window.eel.expose(this.setSpectrogram, "setSpectrogram");
+    window.eel.expose(this.setRecording, "setRecording");
     window.eel.expose(this.memoryError, "memoryError");
+    window.eel.expose(this.playEnd, "playEnd");
   }
 
   componentDidMount() {
@@ -282,10 +282,13 @@ export class App extends Component {
     });
   };
 
-  setSpectrogram = (specData) => {
+  setRecording = (specData, waveData) => {
     this.setState({
       specLoading: false,
       specData,
+      waveData,
+      specStart: 0,
+      specEnd: specData.length,
     });
   };
 
@@ -303,7 +306,7 @@ export class App extends Component {
       tabValue: 0,
     });
 
-    eel.get_spectrogram(
+    eel.get_recording(
       this.state.selectedProject,
       recordingIndex
     )((result) => {
@@ -409,6 +412,27 @@ export class App extends Component {
 
   openAlert = (title, text) => {
     this.setState({ alertDialog: { title, text } });
+  };
+
+  playEnd = () => {
+    this.setState({ playPause: false });
+  };
+
+  playPause = () => {
+    const {
+      playPause,
+      selectedProject,
+      selectedRecording,
+      specStart,
+      specEnd,
+    } = this.state;
+    if (playPause) {
+      this.setState({ playPause: false });
+      eel.pause();
+    } else {
+      this.setState({ playPause: true });
+      eel.play(selectedProject, selectedRecording, specStart, specEnd);
+    }
   };
 
   renderRecording = ({ index, style, data }) => {
@@ -520,6 +544,10 @@ export class App extends Component {
       classifiers,
       speciesDialog,
       species,
+      waveData,
+      specStart,
+      specEnd,
+      playPause,
     } = this.state;
 
     return (
@@ -715,13 +743,12 @@ export class App extends Component {
                 </div>
               </Fade>
 
-              {specData != null && (
+              {specData != [] && (
                 <Spectrogram
-                  data={specData}
                   id={"spectrogram"}
-                  cols={specData.length}
-                  rows={specData[0].length}
                   init={specLoading}
+                  data={specData}
+                  waveData={waveData}
                   maxF={
                     recordingData.samplerate
                       ? (257 / recordingData.samplerate) * 2000
@@ -732,8 +759,32 @@ export class App extends Component {
                       ? recordingData.samplerate / 128 + 1
                       : 220500 / 128 + 1
                   }
-                  loadMore={(offset) => {
+                  offset={specStart}
+                  duration={recordingData.duration}
+                  samplerate={recordingData.samplerate}
+                  loadData={(start, end) => {
                     console.log("get chunk");
+                    this.setState({
+                      specLoading: true,
+                      specStart: start,
+                      specEnd: end,
+                    });
+                    eel.get_chunk(
+                      selectedProject,
+                      selectedRecording,
+                      start,
+                      end
+                    )((data) => {
+                      if (data) {
+                        this.setState({
+                          specData: data,
+                          specLoading: false,
+                        });
+                      }
+                    });
+                  }}
+                  loadMore={(offset) => {
+                    console.log("get chunk", offset);
                     eel.get_chunk(
                       selectedProject,
                       selectedRecording,
@@ -746,6 +797,18 @@ export class App extends Component {
                   }}
                 />
               )}
+
+              <Box
+                style={{
+                  position: "absolute",
+                  bottom: 16,
+                  right: 16,
+                }}
+              >
+                <Button variant="contained" onClick={this.playPause}>
+                  {playPause ? "Pause" : "Play"}
+                </Button>
+              </Box>
             </Box>
             <Divider flexItem sx={{ mr: "-1px" }} />
             <Tabs
@@ -837,8 +900,8 @@ export class App extends Component {
                   {classification && (
                     <BarChart
                       id={"predictionChart"}
-                      values={classification.prediction}
-                      categories={classifiers[classifier].classes}
+                      values={classification.prediction || []}
+                      categories={classifiers[classifier].classes || []}
                     />
                   )}
                 </Grid>
@@ -873,6 +936,7 @@ export class App extends Component {
                   <MenuItem value={5}>5 seconds</MenuItem>
                   <MenuItem value={10}>10 seconds</MenuItem>
                   <MenuItem value={15}>15 seconds</MenuItem>
+                  <MenuItem value={20}>20 seconds</MenuItem>
                   <MenuItem value={0}>Full</MenuItem>
                 </Select>
                 <Button

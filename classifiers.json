@@ -2,13 +2,8 @@
   {
     "name": "German Bats",
     "path": "models/BigBAT.pth",
-    "parameters": {
-      "sample_rate": 220500,
-      "nfft": 512,
-      "max_len": 60,
-      "patch_size": 44,
-      "patch_skip": 22
-    },
+    "sample_rate": 220500,
+    "nfft": 512,
     "classes": [
       "Rhinolophus ferrumequinum",
       "Rhinolophus hipposideros",

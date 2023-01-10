@@ -59,7 +59,11 @@ class Model():
       dim_feedforward=32,
       num_layers=2,
     )
-    self.model.load_state_dict(torch.load(modelpath, map_location='cpu'))
+
+    self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    print(self.device)
+    
+    self.model.load_state_dict(torch.load(modelpath, map_location=self.device))
     self.model.eval()
 
   # downsampling to 22.05kHz and then slowing down 10x
@@ -68,7 +72,7 @@ class Model():
     y, _ = librosa.load(filename, sr=self.sample_rate, duration=duration)
     y = signal.lfilter(b, a, y)
     samples_per_step = self.patch_skip * (self.nfft // 4)
-    ys = slideWindow(torch.Tensor(y), (self.max_len + 1) * samples_per_step, self.max_len * samples_per_step)
+    ys = slideWindow(torch.Tensor(y).to(self.device), (self.max_len + 1) * samples_per_step, self.max_len * samples_per_step)
     x = preprocess(ys, self.nfft)
     output = self.model(x)
     prediction = torch.sigmoid(output).mean(axis=0)

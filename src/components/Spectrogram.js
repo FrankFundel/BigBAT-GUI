@@ -19,7 +19,7 @@ import {
 import React, { useRef, useEffect, useState } from "react";
 
 const Spectrogram = (props) => {
-  const { data, id, cols, rows, maxF, maxS, init } = props;
+  const { data, waveData, id, maxF, maxS, init } = props;
   const chartRef = useRef(undefined);
 
   var loading = false;
@@ -174,8 +174,8 @@ const Spectrogram = (props) => {
     const maxI = 255;
     const seriesSpectrogram = chartSpectrogram
       .addHeatmapGridSeries({
-        columns: cols,
-        rows: rows,
+        columns: 0,
+        rows: 0,
       })
       .setMouseInteractions(false)
       .setWireframeStyle(emptyLine)
@@ -245,7 +245,7 @@ const Spectrogram = (props) => {
           regularProgressiveStep: true,
         },
       })
-      .setName("Projection (Y)")
+      .setName("Spectrum")
       .setCursorSolveBasis("nearest-y");
 
     const chartProjectionX = dashboard
@@ -260,12 +260,6 @@ const Spectrogram = (props) => {
       .setScrollStrategy(undefined)
       .setMouseInteractions(false);
 
-    // Sync projection Axis with spectogram chart projected axis.
-    synchronizeAxisIntervals(
-      chartSpectrogram.getDefaultAxisX(),
-      chartProjectionX.getDefaultAxisX()
-    );
-
     chartProjectionX
       .getDefaultAxisY()
       .setScrollStrategy(AxisScrollStrategies.expansion)
@@ -278,7 +272,14 @@ const Spectrogram = (props) => {
           regularProgressiveStep: true,
         },
       })
-      .setName("Projection (X)");
+      .setName("Waveform");
+
+    const xAxisBand = chartProjectionX
+      .getDefaultAxisX()
+      .addBand()
+      .setValueStart(0)
+      .setValueEnd(10)
+      .setName("X Axis Band");
 
     // Align charts nicely.
     chartSpectrogram.getDefaultAxisY().setThickness(50);
@@ -294,6 +295,7 @@ const Spectrogram = (props) => {
       chartSpectrogram,
       chartProjectionX,
       chartProjectionY,
+      xAxisBand,
     };
 
     return () => {
@@ -314,15 +316,27 @@ const Spectrogram = (props) => {
       chartSpectrogram,
       chartProjectionX,
       chartProjectionY,
+      xAxisBand,
     } = components;
-    const { maxF, maxS, cols, rows, loadMore } = props;
+    const {
+      maxF,
+      maxS,
+      loadMore,
+      loadData,
+      data,
+      waveData,
+      duration,
+      samplerate,
+      offset,
+    } = props;
 
     loading = false;
     let maxI = 255;
+    seriesSpectrogram.dispose();
     seriesSpectrogram = chartSpectrogram
       .addHeatmapGridSeries({
-        columns: cols,
-        rows: rows,
+        columns: data.length || 0,
+        rows: data.length > 0 ? data[0].length : 0,
       })
       .setMouseInteractions(false)
       .setWireframeStyle(emptyLine)
@@ -360,7 +374,7 @@ const Spectrogram = (props) => {
       .getDefaultAxisX()
       .setTickStrategy(AxisTickStrategies.Numeric, (tickStrategy) =>
         tickStrategy.setFormattingFunction((value, range) => {
-          return (value / maxS).toFixed(2);
+          return ((value + offset) / maxS).toFixed(2);
         })
       );
     chartSpectrogram
@@ -368,13 +382,6 @@ const Spectrogram = (props) => {
       .setTickStrategy(AxisTickStrategies.Numeric, (tickStrategy) =>
         tickStrategy.setFormattingFunction((value, range) => {
           return (value / maxF).toFixed(2);
-        })
-      );
-    chartProjectionX
-      .getDefaultAxisX()
-      .setTickStrategy(AxisTickStrategies.Numeric, (tickStrategy) =>
-        tickStrategy.setFormattingFunction((value, range) => {
-          return (value / maxS).toFixed(2);
         })
       );
     chartProjectionY
@@ -387,11 +394,61 @@ const Spectrogram = (props) => {
 
     chartSpectrogram.onSeriesBackgroundMouseDrag((_, event) => {
       const x = seriesSpectrogram.axisX.getInterval().end;
-      if (x > cols + 0.25 * maxS && loading == false) {
-        loadMore(cols);
+      if (x > data.length + 0.25 * maxS && loading == false) {
+        loadMore(data.length + offset);
         loading = true;
       }
     });
+
+    xAxisBand
+      .setValueStart(((offset * 128) / samplerate / duration) * waveData.length)
+      .setValueEnd(
+        (((offset + data.length) * 128) / samplerate / duration) *
+          waveData.length
+      );
+
+    xAxisBand.onMouseUp((_, event) => {
+      let start = xAxisBand.getValueStart();
+      let end = xAxisBand.getValueEnd();
+      if (start < 0) start = 0;
+      if (end > waveData.length) end = waveData.length;
+      start = (start / waveData.length) * duration * samplerate;
+      end = (end / waveData.length) * duration * samplerate;
+      loadData(parseInt(start / 128), parseInt(end / 128));
+    });
+
+    seriesProjectionX.clear();
+    if (waveData) {
+      let values;
+      try {
+        values = waveData.map((value, i) => ({
+          x: i,
+          y: value,
+        }));
+      } catch (e) {}
+      seriesProjectionX.add(values);
+      chartProjectionX.getDefaultAxisX().setInterval(0, waveData.length);
+      chartProjectionX
+        .getDefaultAxisX()
+        .setTickStrategy(AxisTickStrategies.Numeric, (tickStrategy) =>
+          tickStrategy.setFormattingFunction((value, range) => {
+            return ((value / waveData.length) * duration).toFixed(2);
+          })
+        );
+      chartProjectionX.onSeriesBackgroundMouseClick((_, event) => {
+        const locationAxis = translatePoint(
+          chartProjectionX.engine.clientLocation2Engine(
+            event.clientX,
+            event.clientY
+          ),
+          chartProjectionX.engine.scale,
+          seriesProjectionX.scale
+        );
+        let pos = (locationAxis.x / waveData.length) * duration * samplerate;
+        let posI = parseInt(pos / 128);
+        loadData(posI, 0);
+      });
+    }
 
     // Add custom interaction when mouse is hovered over spectrogram chart.
     chartSpectrogram.onSeriesBackgroundMouseMove((_, event) => {
@@ -414,30 +471,13 @@ const Spectrogram = (props) => {
         }));
       } catch (e) {}
 
-      let projectionX;
-      try {
-        projectionX = [];
-        const row = Math.round(locationAxis.y);
-        for (let x = 0; x < cols; x += 1) {
-          projectionX[x] = {
-            x,
-            y: data[x][row],
-          };
-        }
-      } catch (e) {}
-
       // Update projection series data.
       seriesProjectionY.clear();
       if (projectionY) {
         seriesProjectionY.add(projectionY);
       }
-
-      seriesProjectionX.clear();
-      if (projectionX) {
-        seriesProjectionX.add(projectionX);
-      }
     });
-  }, [data, chartRef]);
+  }, [data, waveData, chartRef]);
 
   return <div id={id} ref={chartRef} style={{ height: "100%" }}></div>;
 };

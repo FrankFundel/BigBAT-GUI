@@ -8,11 +8,13 @@ import os
 import csv
 import tkinter as tk
 from tkinter.filedialog import askopenfilename, askopenfilenames, asksaveasfilename
+import numpy as np
 
 import torch
 from tools import preprocess
 import soundfile as sf
 from bat import Model
+import simpleaudio as sa
 
 root = tk.Tk()
 root.withdraw()
@@ -132,16 +134,20 @@ def add_metadata(projectIndex):
     return False
 
 @eel.expose
-def get_chunk(projectIndex, recordingIndex, offset):
+def get_chunk(projectIndex, recordingIndex, start, end=0):
   rec = projects[projectIndex]["recordings"][recordingIndex]
   if not os.path.exists(rec["path"]):
     return False
   info = sf.info(rec["path"])
   samples = int(info.duration * info.samplerate)
   chunk_len = 2 * info.samplerate # 2 seconds
-  start = offset * 128 # pixels * (nfft // 4) -> samples
+  start = int(start * 128)
+  if end == 0:
+    end = start + chunk_len
+  else:
+    end = int(end * 128)
   if start < samples:
-    y, _ = sf.read(rec["path"], dtype='int16', start=start, frames=chunk_len)
+    y, _ = sf.read(rec["path"], dtype='int16', start=start, stop=end)
     x = preprocess(torch.Tensor(y).unsqueeze(0)).squeeze(0) * 255 # save data
     S = x.to(torch.uint8).tolist()
     print("Sending chunk...")
@@ -149,22 +155,24 @@ def get_chunk(projectIndex, recordingIndex, offset):
   else:
     return None
 
-def get_spectrogram_async(rec, sr):
+def get_recording_async(rec, sr, resolution=1000):
   chunk_len = 2 * sr # 2 seconds
-  y, _ = sf.read(rec["path"], dtype='int16', frames=chunk_len)
-  x = preprocess(torch.Tensor(y).unsqueeze(0)).squeeze(0) * 255 # save data
+  y, _ = sf.read(rec["path"], dtype='int16')
+  idx = np.round(np.linspace(0, len(y) - 1, resolution)).astype(int)
+  y_dense = y[idx].tolist()
+  x = preprocess(torch.Tensor(y[:chunk_len]).unsqueeze(0)).squeeze(0) * 255 # save data
   S = x.to(torch.uint8).tolist()
   print("Sending chunk...")
-  eel.setSpectrogram(S)
+  eel.setRecording(S, y_dense)
 
 @eel.expose
-def get_spectrogram(projectIndex, recordingIndex):
+def get_recording(projectIndex, recordingIndex):
   rec = projects[projectIndex]["recordings"][recordingIndex]
   if not os.path.exists(rec["path"]):
     return False
   
   info = sf.info(rec["path"])
-  eel.spawn(get_spectrogram_async, rec, info.samplerate)
+  eel.spawn(get_recording_async, rec, info.samplerate)
   rec["samplerate"] = info.samplerate
   rec["duration"] = info.duration
   save_projects()
@@ -265,6 +273,29 @@ def export_csv(projectIndex):
 def set_maxproclen(projectIndex, val):
   projects[projectIndex]["maxproclen"] = val
   save_projects()
+
+def wait_end(duration):
+  eel.sleep(duration)
+  eel.playEnd()
+
+@eel.expose
+def play(projectIndex, recordingIndex, start, end):
+  global playback
+  rec = projects[projectIndex]["recordings"][recordingIndex]
+  y, sr = sf.read(rec["path"], dtype='int16', start=int(start*128), stop=int(end*128))
+  playback = sa.play_buffer(
+    y,
+    num_channels=1,
+    bytes_per_sample=2,
+    sample_rate=22050
+  )
+  duration = ((end-start)*128)/22050
+  eel.spawn(wait_end, duration)
+
+@eel.expose
+def pause():
+  global playback
+  playback.stop()
 
 def start_eel(develop):
   """Start Eel with either production or development configuration."""
