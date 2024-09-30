@@ -7,3 +7,5 @@ GUI for BigBAT. Needs chrome, python, pip and nodejs to be installed.
 4. Run `python main.py`
 
 This opens the GUI.
+
+https://en.wikipedia.org/wiki/List_of_bioacoustics_software
