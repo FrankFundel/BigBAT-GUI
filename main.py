@@ -84,7 +84,7 @@ def remove_recordings(projectIndex, indices):
 
 @eel.expose
 def add_recordings(projectIndex):
-  filenames = askopenfilenames(filetypes=[("WAV-File", "*.wav")])
+  filenames = askopenfilenames(filetypes=[("WAV-File", "*.wav", "*.WAV")])
   for path in filenames:
     projects[projectIndex]["recordings"].append({
       "title": os.path.basename(path),
